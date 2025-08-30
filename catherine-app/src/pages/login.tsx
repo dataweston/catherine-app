@@ -9,9 +9,24 @@ export default function Login() {
   const router = useRouter()
 
   useEffect(() => {
-    if (!loading && user) {
-      router.replace('/dashboard')
-    }
+    (async () => {
+      if (loading || !user) return
+      try {
+        const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+        if (r.ok) {
+          const { profile } = await r.json()
+          if (!profile || !profile.calorieTarget) {
+            router.replace('/onboarding')
+          } else {
+            router.replace('/dashboard')
+          }
+        } else {
+          router.replace('/onboarding')
+        }
+      } catch {
+        router.replace('/onboarding')
+      }
+    })()
   }, [loading, user, router])
 
   if (loading) return <div className="p-4">Loading…</div>

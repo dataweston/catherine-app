@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { calculateCalorieTarget } from '../lib/calorieCalc';
 import getSupabase from '../lib/supabaseClient';
-import { getOrCreateUserId } from '../lib/user';
 import { saveToCache } from '../lib/cache';
+import RequireAuth from '../components/RequireAuth';
+import { useAuth } from '../lib/auth';
+import { useRouter } from 'next/router';
 
 type FormState = {
   age: string;
@@ -25,9 +27,26 @@ const initialState: FormState = {
 };
 
 export default function Onboarding() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
   const [form, setForm] = useState<FormState>(initialState);
   const [calorieTarget, setCalorieTarget] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    // If already onboarded, skip to dashboard
+    (async () => {
+      if (loading) return;
+      if (!user) return; // RequireAuth will gate rendering
+      try {
+        const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+        if (r.ok) {
+          const { profile } = await r.json()
+          if (profile && profile.calorieTarget) router.replace('/dashboard')
+        }
+      } catch {}
+    })()
+  }, [loading, user, router])
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     const { name, value } = e.target;
@@ -49,9 +68,8 @@ export default function Onboarding() {
       });
       setCalorieTarget(calorie);
       setSubmitted(true);
-      const anonId = getOrCreateUserId();
       const profile = {
-        id: anonId,
+        id: user!.id,
         age: Number(form.age),
         sex: form.sex as 'male' | 'female',
         weight: Number(form.weight),
@@ -79,10 +97,14 @@ export default function Onboarding() {
       } catch (err) {
         console.warn('Supabase client error:', err);
       }
+      router.replace('/dashboard')
     }
   }
 
+  if (loading) return <div className="p-4">Loading…</div>
+
   return (
+    <RequireAuth>
     <div className="max-w-md mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Onboarding</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -139,5 +161,6 @@ export default function Onboarding() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

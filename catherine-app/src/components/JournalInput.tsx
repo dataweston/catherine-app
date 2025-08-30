@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { parse } from '../stubs/parserStub';
 import { saveToCache, loadFromCache } from '../lib/cache';
-import { getOrCreateUserId } from '../lib/user';
+import { useAuth } from '../lib/auth';
 
 type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean };
 type ParsedItem = { item: string; calories: number };
 
 export default function JournalInput() {
+  const { user } = useAuth();
   const [text, setText] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
 
@@ -16,7 +17,8 @@ export default function JournalInput() {
       setEntries(cached);
       // fetch remote entries to keep dashboard accurate
       try {
-        const userId = getOrCreateUserId();
+        const userId = user?.id || '';
+        if (!userId) return;
         const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`)
         if (resp.ok) {
           const json = (await resp.json()) as { entries: Array<{ text: string; calories: number; date: string }> }
@@ -38,10 +40,10 @@ export default function JournalInput() {
         // ignore offline/network errors
       }
     })();
-  }, []);
+  }, [user?.id]);
 
   async function addEntry() {
-    if (!text.trim()) return;
+  if (!text.trim()) return;
     const parsed = parse(text) as ParsedItem[];
     // parserStub returns array of { item, calories }
     const now = new Date().toISOString();
@@ -60,13 +62,14 @@ export default function JournalInput() {
 
   async function syncNow() {
     // simple manual sync simulation: mark all as synced and move to 'synced_entries'
-    const toSync = entries.map((e) => ({ ...e, synced: true }));
+  const toSync = entries.map((e) => ({ ...e, synced: true }));
     const existing = (await loadFromCache<Entry[]>('synced_entries')) || [];
     await saveToCache('synced_entries', [...toSync, ...existing]);
     await saveToCache('journal_entries', []);
     // Route writes via API (server-side validation/logging)
     try {
-      const userId = getOrCreateUserId();
+  const userId = user?.id || '';
+  if (!userId) return;
       const rows = toSync.map((e) => ({
         user_id: userId,
         text: e.text,

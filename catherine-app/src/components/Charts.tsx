@@ -1,23 +1,26 @@
 import { useEffect, useState } from 'react'
 import { loadFromCache } from '../lib/cache'
 import { forecastWeight } from '../stubs/forecastStub'
-import { getOrCreateUserId } from '../lib/user'
+import { useAuth } from '../lib/auth'
 
 type Synced = { calories: number; date: string }
 
 export default function Charts() {
   const [series, setSeries] = useState<Array<{ date: string; calories: number }>>([])
+  const { user } = useAuth()
 
   useEffect(() => {
     (async () => {
       const local = (await loadFromCache<Synced[]>('synced_entries')) || []
       let remote: Synced[] = []
       try {
-        const userId = getOrCreateUserId()
-        const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`)
-        if (resp.ok) {
-          const json = (await resp.json()) as { entries: Array<{ text: string; calories: number; date: string }> }
-          remote = json.entries.map(e => ({ calories: e.calories, date: e.date }))
+        const userId = user?.id || ''
+        if (userId) {
+          const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`)
+          if (resp.ok) {
+            const json = (await resp.json()) as { entries: Array<{ text: string; calories: number; date: string }> }
+            remote = json.entries.map(e => ({ calories: e.calories, date: e.date }))
+          }
         }
       } catch {
         // offline or API not configured; ignore
@@ -51,7 +54,7 @@ export default function Charts() {
       const arr = Array.from(byDate.entries()).map(([date, calories]) => ({ date, calories }))
       setSeries(arr)
     })()
-  }, [])
+  }, [user?.id])
 
   const max = Math.max(1, ...series.map(d => d.calories))
   // Simple linear trend on indices
