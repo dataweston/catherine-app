@@ -36,10 +36,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const getSiteUrl = () => {
+    const env = (process.env.NEXT_PUBLIC_SITE_URL || '').trim()
+    if (env) return env.replace(/\/$/, '')
+    if (typeof window !== 'undefined') return window.location.origin
+    return 'http://localhost:3000'
+  }
+
   const signInWithEmail = async (email: string) => {
     const supabase = getSupabase()
     if (!supabase) return { error: 'Auth not configured' }
-    const { error } = await supabase.auth.signInWithOtp({ email })
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        // Ensure the magic link returns to the correct site (prod or dev)
+        emailRedirectTo: `${getSiteUrl()}/login`,
+      },
+    })
     return { error: error?.message }
   }
 

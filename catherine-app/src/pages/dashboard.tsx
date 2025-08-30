@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { loadFromCache } from '../lib/cache';
 import RequireAuth from '../components/RequireAuth';
 import Warnings from '../components/Warnings';
+import Charts from '../components/Charts';
 
 export default function Dashboard() {
   const [total, setTotal] = useState(0);
@@ -27,6 +28,9 @@ export default function Dashboard() {
         </div>
         <div className="mt-4">
           <Warnings caloriesToday={total} />
+        </div>
+        <div className="mt-8">
+          <Charts />
         </div>
       </div>
     </RequireAuth>
