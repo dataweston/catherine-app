@@ -69,6 +69,10 @@ export default function Onboarding() {
       });
       setCalorieTarget(calorie);
       setSubmitted(true);
+      const favorites = form.favoriteFoods
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
       const profile = {
         id: user!.id,
         age: Number(form.age),
@@ -77,14 +81,13 @@ export default function Onboarding() {
   height: heightCm,
         goal: form.goal as 'gain' | 'lose' | 'maintain',
         activityLevel: Number(form.activityLevel),
-        favoriteFoods: form.favoriteFoods
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        favoriteFoods: favorites,
         calorieTarget: calorie,
       };
       // Save locally and POST to our API to persist on the server
       await saveToCache('profile', profile);
+      // Also cache quick actions for journal (favorites)
+      await saveToCache('quick_actions', favorites.map(name => ({ name, serving: '1', calories: 0 })))
       try {
         await fetch('/api/profile', {
           method: 'POST',

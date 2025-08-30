@@ -1,19 +1,46 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 
-// Minimal stub database
-const FOOD_DB: Array<{ name: string; serving: string; calories: number; tags?: string[] }> = [
-  { name: 'Brown rice', serving: '1 cup (195g)', calories: 215, tags: ['rice', 'cup'] },
-  { name: 'White rice', serving: '1 cup (195g)', calories: 205, tags: ['rice', 'cup'] },
-  { name: 'Chicken breast', serving: '6 oz (170g)', calories: 280, tags: ['chicken', 'oz'] },
-  { name: 'Egg', serving: '1 large', calories: 78, tags: ['egg'] },
-  { name: 'Bread (toast)', serving: '1 slice', calories: 80, tags: ['bread', 'toast', 'slice'] },
-  { name: 'Milk (2%)', serving: '1 cup (240ml)', calories: 122, tags: ['milk', 'cup'] },
-]
+type Item = { name: string; serving: string; calories: number }
+type NxFood = { food_name?: string; serving_qty?: number; serving_unit?: string; nf_calories?: number }
+type NxResponse = { foods?: NxFood[] }
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
-  const q = (req.query.q as string || '').toLowerCase().trim()
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const q = ((req.query.q as string) || '').trim()
   if (!q) return res.status(200).json({ items: [], query: '' })
-  const terms = q.split(/\s+/).filter(Boolean)
-  const items = FOOD_DB.filter(item => terms.every(t => item.name.toLowerCase().includes(t) || (item.tags||[]).some(tag => tag.includes(t))))
-  return res.status(200).json({ items, query: q })
+
+  const appId = process.env.NUTRITIONIX_APP_ID
+  const appKey = process.env.NUTRITIONIX_APP_KEY
+  if (!appId || !appKey) return res.status(503).json({ error: 'Nutrition API not configured' })
+
+  try {
+    const r = await fetch('https://trackapi.nutritionix.com/v2/natural/nutrients', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-app-id': appId,
+        'x-app-key': appKey,
+      },
+      body: JSON.stringify({ query: q }),
+      // Let Vercel cache upstream result per unique body
+      next: { revalidate: (parseInt(process.env.FOOD_CACHE_TTL_DAYS || '30', 10) || 30) * 86400 },
+    })
+    if (!r.ok) {
+      const txt = await r.text()
+      return res.status(502).json({ error: 'Nutrition API error', details: txt.slice(0, 500) })
+    }
+    const json = (await r.json()) as NxResponse
+    const foods = Array.isArray(json.foods) ? json.foods : []
+    const items: Item[] = foods.map((f) => ({
+      name: f.food_name || 'Item',
+      serving: [f.serving_qty, f.serving_unit].filter((v) => v !== undefined && v !== null).join(' '),
+      calories: Math.round(Number(f.nf_calories) || 0),
+    }))
+    // CDN cache headers for better performance
+    const ttl = (parseInt(process.env.FOOD_CACHE_TTL_DAYS || '30', 10) || 30) * 86400
+    res.setHeader('Cache-Control', `public, s-maxage=${ttl}, stale-while-revalidate=${ttl}`)
+    return res.status(200).json({ items, query: q })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown'
+    return res.status(500).json({ error: 'Server error', message })
+  }
 }
