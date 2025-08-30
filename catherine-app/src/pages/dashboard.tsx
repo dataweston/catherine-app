@@ -14,6 +14,8 @@ export default function Dashboard() {
   const [macros, setMacros] = useState<{ protein: number; carbs: number; fat: number }>({ protein: 0, carbs: 0, fat: 0 });
   const [weights, setWeights] = useState<Array<{ date: string; weight_kg: number }>>([]);
   const [weightInput, setWeightInput] = useState('');
+  const [showWeightPrompt, setShowWeightPrompt] = useState(false);
+  const [recalcMsg, setRecalcMsg] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -59,6 +61,15 @@ export default function Dashboard() {
             if (wr.ok) {
               const { weights: ws } = await wr.json()
               setWeights(ws || [])
+              // Prompt weekly if last weight older than 7 days
+              const last = (ws || [])[0]
+              const lastPrompt = await loadFromCache<{ date: string }>('last_weight_prompt')
+              const today = new Date()
+              const lastDate = last ? new Date(last.date) : null
+              const daysSinceWeight = lastDate ? Math.floor((today.getTime() - lastDate.getTime())/86400000) : Infinity
+              const lastPromptDate = lastPrompt?.date ? new Date(lastPrompt.date) : null
+              const daysSincePrompt = lastPromptDate ? Math.floor((today.getTime() - lastPromptDate.getTime())/86400000) : Infinity
+              setShowWeightPrompt(daysSinceWeight >= 7 && daysSincePrompt >= 7)
             }
           } catch {}
         }
@@ -87,6 +98,21 @@ export default function Dashboard() {
         <div className="mt-4">
           <Warnings caloriesToday={total} />
         </div>
+        {showWeightPrompt && (
+          <div className="mt-4 p-3 rounded bg-yellow-50 border border-yellow-200 flex items-center justify-between">
+            <div className="text-sm text-yellow-900">It’s been a week since your last weigh-in. Log your weight to recalibrate targets.</div>
+            <div className="flex gap-2">
+              <button className="text-sm bg-yellow-600 text-white px-2 py-1 rounded" onClick={() => {
+                const el = document.querySelector<HTMLInputElement>('input[placeholder="Weight (lbs)"]')
+                el?.focus()
+              }}>Log now</button>
+              <button className="text-sm px-2 py-1 rounded border" onClick={async () => {
+                setShowWeightPrompt(false)
+                await saveToCache('last_weight_prompt', { date: new Date().toISOString() })
+              }}>Dismiss</button>
+            </div>
+          </div>
+        )}
         <div className="mt-4 p-4 bg-white rounded shadow">
           <h3 className="font-semibold mb-2">Today macros</h3>
           <div className="flex gap-6 text-sm">
@@ -94,6 +120,9 @@ export default function Dashboard() {
             <div>Carbs: <span className="font-semibold">{macros.carbs} g</span></div>
             <div>Fat: <span className="font-semibold">{macros.fat} g</span></div>
           </div>
+          {recalcMsg && (
+            <div className="mt-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">{recalcMsg}</div>
+          )}
         </div>
         <div className="mt-6 p-4 bg-white rounded shadow">
           <div className="flex items-center justify-between mb-2">
@@ -147,6 +176,17 @@ export default function Dashboard() {
                   setWeights(ws || [])
                   await saveToCache('last_weight_prompt', { date: new Date().toISOString() })
                   setWeightInput('')
+                  // Trigger adaptive recalculation (best-effort)
+                  try {
+                    const rr = await fetch('/api/adaptive/recalculate', { method: 'POST', headers, body: JSON.stringify({ user_id: user.id, lookback_days: 14 }) })
+                    if (rr.ok) {
+                      const j = await rr.json()
+                      if (j?.recommended_calories) {
+                        setRecalcMsg(`New suggested calories: ${j.recommended_calories} kcal`)
+                        setTimeout(() => setRecalcMsg(null), 5000)
+                      }
+                    }
+                  } catch {}
                 }
               } catch {}
             }}
