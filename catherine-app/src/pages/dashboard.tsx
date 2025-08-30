@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { loadFromCache } from '../lib/cache';
+import { loadFromCache, saveToCache } from '../lib/cache';
 import RequireAuth from '../components/RequireAuth';
 import Warnings from '../components/Warnings';
 import Charts from '../components/Charts';
@@ -11,27 +11,56 @@ export default function Dashboard() {
   const [total, setTotal] = useState(0);
   const [target, setTarget] = useState<number | null>(null);
   const [recent, setRecent] = useState<Array<{ text?: string; calories: number; date: string }>>([]);
+  const [macros, setMacros] = useState<{ protein: number; carbs: number; fat: number }>({ protein: 0, carbs: 0, fat: 0 });
+  const [weights, setWeights] = useState<Array<{ date: string; weight_kg: number }>>([]);
+  const [weightInput, setWeightInput] = useState('');
 
   useEffect(() => {
     (async () => {
-      const synced = (await loadFromCache<Array<{ text?: string; calories: number; date: string }>>('synced_entries')) || [];
+  const synced = (await loadFromCache<Array<{ text?: string; calories: number; date: string }>>('synced_entries')) || [];
+  const locals = (await loadFromCache<Array<{ text?: string; calories: number; date: string }>>('journal_entries')) || [];
       const today = new Date().toISOString().slice(0, 10);
-      const todayTotal = synced
+      const todayItems: Array<{ calories: number; date: string; protein?: number; carbs?: number; fat?: number }> = [...synced, ...locals]
         .filter((s) => s.date.slice(0, 10) === today)
-        .reduce((sum, s) => sum + (s.calories || 0), 0);
+      const todayTotal = todayItems.reduce((sum, s) => sum + (s.calories || 0), 0);
       setTotal(todayTotal);
-      setRecent(synced.slice(0, 5));
+      // Sum macros if available on entries
+      const m = todayItems.reduce<{ protein: number; carbs: number; fat: number }>((acc, s) => ({
+        protein: acc.protein + (s.protein || 0),
+        carbs: acc.carbs + (s.carbs || 0),
+        fat: acc.fat + (s.fat || 0),
+      }), { protein: 0, carbs: 0, fat: 0 })
+      setMacros(m)
+  setRecent([...locals, ...synced].sort((a,b) => b.date.localeCompare(a.date)).slice(0,5));
       // try load profile locally for target display
       const profile = await loadFromCache<{ calorieTarget?: number }>('profile');
       if (profile?.calorieTarget) setTarget(profile.calorieTarget);
       // ensure we reflect server value if available
       try {
         if (user?.id) {
-          const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+          let headers: Record<string, string> = {}
+          try {
+            const mod = await import('../lib/supabaseClient')
+            const supa = mod.default?.()
+            if (supa) {
+              const { data } = await supa.auth.getSession()
+              const token = data.session?.access_token
+              if (token) headers = { Authorization: `Bearer ${token}` }
+            }
+          } catch {}
+          const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`, { headers })
           if (r.ok) {
             const { profile: p } = await r.json()
             if (p?.calorieTarget) setTarget(p.calorieTarget)
           }
+          // Load recent weights
+          try {
+            const wr = await fetch(`/api/weights?userId=${encodeURIComponent(user.id)}`, { headers })
+            if (wr.ok) {
+              const { weights: ws } = await wr.json()
+              setWeights(ws || [])
+            }
+          } catch {}
         }
       } catch {}
     })();
@@ -58,6 +87,14 @@ export default function Dashboard() {
         <div className="mt-4">
           <Warnings caloriesToday={total} />
         </div>
+        <div className="mt-4 p-4 bg-white rounded shadow">
+          <h3 className="font-semibold mb-2">Today macros</h3>
+          <div className="flex gap-6 text-sm">
+            <div>Protein: <span className="font-semibold">{macros.protein} g</span></div>
+            <div>Carbs: <span className="font-semibold">{macros.carbs} g</span></div>
+            <div>Fat: <span className="font-semibold">{macros.fat} g</span></div>
+          </div>
+        </div>
         <div className="mt-6 p-4 bg-white rounded shadow">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold">Recent entries</h3>
@@ -78,6 +115,60 @@ export default function Dashboard() {
         </div>
         <div className="mt-8">
           <Charts />
+        </div>
+        <div className="mt-8 p-4 bg-white rounded shadow">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Weekly weight check-in</h3>
+            <div className="text-xs text-gray-600">We’ll prompt weekly if you haven’t logged a weight.</div>
+          </div>
+          <form
+            className="flex gap-2"
+            onSubmit={async (e) => {
+              e.preventDefault()
+              const value = Number(weightInput)
+              if (!value || !user?.id) return
+              // Accept lbs input, convert to kg
+              const weight_kg = value * 0.45359237
+              const date = new Date().toISOString().slice(0,10)
+              try {
+                let headers: Record<string, string> = { 'Content-Type': 'application/json' }
+                try {
+                  const mod = await import('../lib/supabaseClient')
+                  const supa = mod.default?.()
+                  if (supa) {
+                    const { data } = await supa.auth.getSession()
+                    const token = data.session?.access_token
+                    if (token) headers = { ...headers, Authorization: `Bearer ${token}` }
+                  }
+                } catch {}
+                const r = await fetch('/api/weights', { method: 'POST', headers, body: JSON.stringify([{ user_id: user.id, date, weight_kg }]) })
+                if (r.ok) {
+                  const { weights: ws } = await r.json()
+                  setWeights(ws || [])
+                  await saveToCache('last_weight_prompt', { date: new Date().toISOString() })
+                  setWeightInput('')
+                }
+              } catch {}
+            }}
+          >
+            <input value={weightInput} onChange={(e)=>setWeightInput(e.target.value)} placeholder="Weight (lbs)" className="border rounded p-2 w-40" />
+            <button className="bg-blue-600 text-white px-3 py-2 rounded">Log weight</button>
+          </form>
+          <div className="mt-4">
+            <h4 className="font-semibold mb-2">Recent weights</h4>
+            {weights.length === 0 ? (
+              <div className="text-sm text-gray-500">No weights logged yet.</div>
+            ) : (
+              <ul className="text-sm grid grid-cols-2 gap-2">
+                {weights.slice(0,8).map((w, i) => (
+                  <li key={`${w.date}-${i}`} className="flex justify-between">
+                    <span>{w.date}</span>
+                    <span>{(w.weight_kg * 2.2046226218).toFixed(1)} lbs</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
     </RequireAuth>

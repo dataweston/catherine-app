@@ -12,7 +12,17 @@ export default function Home() {
       if (loading) return;
       if (user) {
         try {
-          const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+          let headers: Record<string, string> = {}
+          try {
+            const mod = await import('../lib/supabaseClient')
+            const supa = mod.default?.()
+            if (supa) {
+              const { data } = await supa.auth.getSession()
+              const token = data.session?.access_token
+              if (token) headers = { Authorization: `Bearer ${token}` }
+            }
+          } catch {}
+          const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`, { headers })
           if (r.ok) {
             const { profile } = await r.json()
             if (profile && profile.calorieTarget) router.replace('/dashboard')

@@ -13,24 +13,31 @@ export default function JournalInput() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string>('');
 
+  // Safely get the current access token for Authorization headers
+  async function getAuthToken(): Promise<string | undefined> {
+    try {
+      const mod = await import('../lib/supabaseClient');
+      const supa = mod.default?.();
+      if (!supa) return undefined;
+      const { data } = await supa.auth.getSession();
+      return data.session?.access_token || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   useEffect(() => {
     (async () => {
-      const cached = (await loadFromCache<Entry[]>('journal_entries')) || [];
-      setEntries(cached);
+    const cached = (await loadFromCache<Entry[]>('journal_entries')) || [];
       // fetch remote entries to keep dashboard accurate
       try {
-        const userId = user?.id || '';
-        if (!userId) return;
-        const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`)
+  const userId = user?.id || '';
+  if (!userId) return;
+  const token = await getAuthToken();
+  const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}` , { headers: token ? { Authorization: `Bearer ${token}` } : {} })
         if (resp.ok) {
-          const json = (await resp.json()) as { entries: Array<{ text: string; calories: number; date: string }> }
-          const remote = json.entries.map((e, i) => ({
-            id: `r-${Date.now()}-${i}`,
-            text: e.text,
-            calories: e.calories,
-            date: e.date,
-            synced: true,
-          }))
+      const json = (await resp.json()) as { entries: Array<{ id: string; text: string; calories: number; date: string }> }
+      const remote = json.entries.map((e) => ({ id: e.id, text: e.text, calories: e.calories, date: e.date, synced: true }))
           const existingSynced = (await loadFromCache<Entry[]>('synced_entries')) || []
           // Merge by date+text+calories to avoid obvious dupes
           const key = (e: Entry) => `${e.date.slice(0,19)}|${e.text}|${e.calories}`
@@ -41,6 +48,9 @@ export default function JournalInput() {
       } catch {
         // ignore offline/network errors
       }
+    // Combine remote (synced) + local (unsynced) for view
+    const synced = (await loadFromCache<Entry[]>('synced_entries')) || []
+    setEntries([...(cached || []), ...synced].sort((a, b) => (b.date.localeCompare(a.date))))
       // attempt auto-sync of any unsynced local entries if authenticated
       try {
         const userId = user?.id || '';
@@ -48,7 +58,8 @@ export default function JournalInput() {
         const toSync = cached.filter(e => !e.synced)
         if (toSync.length) {
           const rows = toSync.map((e) => ({ user_id: userId, text: e.text, calories: e.calories, date: e.date }))
-          const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) })
+          const token = await getAuthToken();
+          const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(rows) })
           if (res.ok) {
             const updated = cached.map(e => ({ ...e, synced: true }))
             setEntries(updated)
@@ -73,22 +84,34 @@ export default function JournalInput() {
       date: now,
       synced: false,
     }));
-    let updated = [...newItems, ...entries];
-    setEntries(updated);
-    await saveToCache('journal_entries', updated);
+  const updatedLocal = [...newItems, ...entries.filter(e => !e.synced)];
+    setEntries([...
+      updatedLocal,
+      ...((await loadFromCache<Entry[]>('synced_entries')) || [])
+    ].sort((a,b) => b.date.localeCompare(a.date)))
+    await saveToCache('journal_entries', updatedLocal);
     // Try to auto-sync immediately if logged in
     try {
       const userId = user?.id || '';
       if (userId) {
         const rows = newItems.map((e) => ({ user_id: userId, text: e.text, calories: e.calories, date: e.date }))
-        const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) })
+        const token = await getAuthToken();
+        const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(rows) })
         if (res.ok) {
-          // Mark just-added items as synced
-          updated = updated.map(e => newItems.some(n => n.id === e.id) ? { ...e, synced: true } : e)
-          setEntries(updated)
-          await saveToCache('journal_entries', updated)
+          const data = await res.json() as { entries: Array<{ id: string; text: string; calories: number; date: string }> }
+          const inserted = data.entries.map(e => ({ id: e.id, text: e.text, calories: e.calories, date: e.date, synced: true }))
+          // Clear the local versions we just synced
+          const remainingLocal = (await loadFromCache<Entry[]>('journal_entries'))?.filter(e => !newItems.some(n => n.id === e.id)) || []
+          await saveToCache('journal_entries', remainingLocal)
+          // Update synced cache
           const existing = (await loadFromCache<Entry[]>('synced_entries')) || []
-          await saveToCache('synced_entries', [...newItems.map(e => ({ ...e, synced: true })), ...existing])
+          await saveToCache('synced_entries', [...inserted, ...existing])
+          // Refresh view
+          setEntries([...
+            remainingLocal,
+            ...inserted,
+            ...existing
+          ].sort((a,b) => b.date.localeCompare(a.date)))
         }
       }
     } catch {}
@@ -103,17 +126,60 @@ export default function JournalInput() {
   async function saveEdit(id: string) {
     const parsed = parse(editingText) as ParsedItem[]
     const calories = Math.max(0, Math.round(parsed.reduce((s, p) => s + (p.calories || 0), 0)))
-    const updated = entries.map(e => e.id === id ? { ...e, text: editingText, calories } : e)
-    setEntries(updated)
-    await saveToCache('journal_entries', updated)
+    const target = entries.find(e => e.id === id)
+    if (!target) return
+    if (target.synced) {
+      // Update on server
+      try {
+  const userId = user?.id || ''
+  if (!userId) return
+  const token = await getAuthToken();
+        const res = await fetch('/api/entries', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ id, user_id: userId, text: editingText, calories }),
+        })
+        if (res.ok) {
+          const { entry } = await res.json() as { entry: { id: string; text: string; calories: number; date: string } }
+          const synced = (await loadFromCache<Entry[]>('synced_entries')) || []
+          const newSynced = synced.map(e => e.id === id ? { ...e, text: entry.text, calories: entry.calories } : e)
+          await saveToCache('synced_entries', newSynced)
+          const locals = (await loadFromCache<Entry[]>('journal_entries')) || []
+          setEntries([ ...locals, ...newSynced ].sort((a,b) => b.date.localeCompare(a.date)))
+        }
+      } catch {}
+    } else {
+      const updated = entries.map(e => e.id === id ? { ...e, text: editingText, calories } : e)
+      setEntries(updated)
+      await saveToCache('journal_entries', updated.filter(e => !e.synced))
+    }
     setEditingId(null)
     setEditingText('')
   }
 
   async function deleteEntry(id: string) {
-    const updated = entries.filter(e => e.id !== id)
-    setEntries(updated)
-    await saveToCache('journal_entries', updated)
+    const target = entries.find(e => e.id === id)
+    if (!target) return
+    if (target.synced) {
+      try {
+  const userId = user?.id || ''
+  if (!userId) return
+  const token = await getAuthToken();
+  const res = await fetch('/api/entries', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ id, user_id: userId }) })
+        if (res.ok) {
+          const synced = (await loadFromCache<Entry[]>('synced_entries')) || []
+          const newSynced = synced.filter(e => e.id !== id)
+          await saveToCache('synced_entries', newSynced)
+          const locals = (await loadFromCache<Entry[]>('journal_entries')) || []
+          setEntries([ ...locals, ...newSynced ].sort((a,b) => b.date.localeCompare(a.date)))
+        }
+      } catch {}
+    } else {
+      const newLocals = (await loadFromCache<Entry[]>('journal_entries'))?.filter(e => e.id !== id) || []
+      await saveToCache('journal_entries', newLocals)
+      const synced = (await loadFromCache<Entry[]>('synced_entries')) || []
+      setEntries([ ...newLocals, ...synced ].sort((a,b) => b.date.localeCompare(a.date)))
+    }
   }
 
   return (
@@ -148,8 +214,8 @@ export default function JournalInput() {
                     </>
                   ) : (
                     <>
-                      <button className="text-sm bg-gray-200 px-2 py-1 rounded disabled:opacity-50" disabled={!!e.synced} onClick={() => startEdit(e.id, e.text)}>Edit</button>
-                      <button className="text-sm bg-red-600 text-white px-2 py-1 rounded disabled:opacity-50" disabled={!!e.synced} onClick={() => deleteEntry(e.id)}>Delete</button>
+                      <button className="text-sm bg-gray-200 px-2 py-1 rounded" onClick={() => startEdit(e.id, e.text)}>Edit</button>
+                      <button className="text-sm bg-red-600 text-white px-2 py-1 rounded" onClick={() => deleteEntry(e.id)}>Delete</button>
                     </>
                   )}
                 </div>

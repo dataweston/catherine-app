@@ -16,7 +16,18 @@ export default function Charts() {
       try {
         const userId = user?.id || ''
         if (userId) {
-          const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`)
+          // Try to include Authorization if available
+          let headers: Record<string, string> = {}
+          try {
+            const mod = await import('../lib/supabaseClient')
+            const supa = mod.default?.()
+            if (supa) {
+              const { data } = await supa.auth.getSession()
+              const token = data.session?.access_token
+              if (token) headers = { Authorization: `Bearer ${token}` }
+            }
+          } catch {}
+          const resp = await fetch(`/api/entries?userId=${encodeURIComponent(userId)}`, { headers })
           if (resp.ok) {
             const json = (await resp.json()) as { entries: Array<{ text: string; calories: number; date: string }> }
             remote = json.entries.map(e => ({ calories: e.calories, date: e.date }))

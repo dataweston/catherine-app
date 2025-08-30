@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 
 type SearchResult = {
-  items: Array<{ name: string; serving: string; calories: number }>
+  items: Array<{ name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }>
   query: string
 }
 
@@ -10,7 +10,7 @@ export default function QuickAdd() {
   const [results, setResults] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [quick, setQuick] = useState<Array<{ name: string; serving: string; calories: number }>>([])
+  const [quick, setQuick] = useState<Array<{ name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }>>([])
 
   async function search(e: FormEvent) {
     e.preventDefault()
@@ -36,16 +36,16 @@ export default function QuickAdd() {
   useEffect(() => {
     (async () => {
       const cache = await import('../lib/cache')
-      const saved = (await cache.loadFromCache<Array<{ name: string; serving: string; calories: number }>>('quick_actions')) || []
+  const saved = (await cache.loadFromCache<Array<{ name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }>>('quick_actions')) || []
       setQuick(saved)
     })()
   }, [])
 
-  type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean }
-  async function addToJournal(item: { name: string; serving: string; calories: number }) {
+  type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean; protein?: number; carbs?: number; fat?: number }
+  async function addToJournal(item: { name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }) {
     // Create a single journal entry using existing JournalInput format in cache
     const now = new Date().toISOString()
-    const entry = { id: `${Date.now()}-qa`, text: `${item.name} (${item.serving})`, calories: item.calories, date: now, synced: false }
+  const entry = { id: `${Date.now()}-qa`, text: `${item.name} (${item.serving})`, calories: item.calories, date: now, synced: false, protein: item.protein, carbs: item.carbs, fat: item.fat }
     const cache = await import('../lib/cache')
     const existing = (await cache.loadFromCache<Entry[]>('journal_entries')) || []
     const updated = [entry, ...existing]
@@ -53,7 +53,7 @@ export default function QuickAdd() {
     // add to quick actions if not present
     const exists = quick.some(q => q.name.toLowerCase() === item.name.toLowerCase())
     if (!exists) {
-      const newQuick = [{ name: item.name, serving: item.serving || '1', calories: item.calories }, ...quick]
+      const newQuick = [{ name: item.name, serving: item.serving || '1', calories: item.calories, protein: item.protein, carbs: item.carbs, fat: item.fat }, ...quick]
       setQuick(newQuick)
       await cache.saveToCache('quick_actions', newQuick)
     }
@@ -101,6 +101,9 @@ export default function QuickAdd() {
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-sm font-semibold">{it.calories} kcal</div>
+                    {typeof it.protein === 'number' && <div className="text-xs text-gray-600">P {it.protein}g</div>}
+                    {typeof it.carbs === 'number' && <div className="text-xs text-gray-600">C {it.carbs}g</div>}
+                    {typeof it.fat === 'number' && <div className="text-xs text-gray-600">F {it.fat}g</div>}
                     <button className="text-sm bg-green-600 text-white px-2 py-1 rounded" onClick={() => addToJournal(it)}>Add</button>
                   </div>
                 </li>

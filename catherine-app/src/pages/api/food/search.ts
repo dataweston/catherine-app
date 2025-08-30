@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 
-type Item = { name: string; serving: string; calories: number }
-type NxFood = { food_name?: string; serving_qty?: number; serving_unit?: string; nf_calories?: number }
+type Item = { name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }
+type NxFood = { food_name?: string; serving_qty?: number; serving_unit?: string; nf_calories?: number; nf_protein?: number; nf_total_carbohydrate?: number; nf_total_fat?: number }
 type NxResponse = { foods?: NxFood[] }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -34,6 +34,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       name: f.food_name || 'Item',
       serving: [f.serving_qty, f.serving_unit].filter((v) => v !== undefined && v !== null).join(' '),
       calories: Math.round(Number(f.nf_calories) || 0),
+      protein: f.nf_protein != null ? Math.round(Number(f.nf_protein)) : undefined,
+      carbs: f.nf_total_carbohydrate != null ? Math.round(Number(f.nf_total_carbohydrate)) : undefined,
+      fat: f.nf_total_fat != null ? Math.round(Number(f.nf_total_fat)) : undefined,
     }))
     // CDN cache headers for better performance
     const ttl = (parseInt(process.env.FOOD_CACHE_TTL_DAYS || '30', 10) || 30) * 86400
