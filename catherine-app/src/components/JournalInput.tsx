@@ -10,6 +10,8 @@ export default function JournalInput() {
   const { user } = useAuth();
   const [text, setText] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
 
   useEffect(() => {
     (async () => {
@@ -39,6 +41,23 @@ export default function JournalInput() {
       } catch {
         // ignore offline/network errors
       }
+      // attempt auto-sync of any unsynced local entries if authenticated
+      try {
+        const userId = user?.id || '';
+        if (!userId) return;
+        const toSync = cached.filter(e => !e.synced)
+        if (toSync.length) {
+          const rows = toSync.map((e) => ({ user_id: userId, text: e.text, calories: e.calories, date: e.date }))
+          const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) })
+          if (res.ok) {
+            const updated = cached.map(e => ({ ...e, synced: true }))
+            setEntries(updated)
+            await saveToCache('journal_entries', updated)
+            const existing = (await loadFromCache<Entry[]>('synced_entries')) || []
+            await saveToCache('synced_entries', [...toSync.map(e => ({ ...e, synced: true })), ...existing])
+          }
+        }
+      } catch {}
     })();
   }, [user?.id]);
 
@@ -54,37 +73,47 @@ export default function JournalInput() {
       date: now,
       synced: false,
     }));
-    const updated = [...newItems, ...entries];
+    let updated = [...newItems, ...entries];
     setEntries(updated);
     await saveToCache('journal_entries', updated);
+    // Try to auto-sync immediately if logged in
+    try {
+      const userId = user?.id || '';
+      if (userId) {
+        const rows = newItems.map((e) => ({ user_id: userId, text: e.text, calories: e.calories, date: e.date }))
+        const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) })
+        if (res.ok) {
+          // Mark just-added items as synced
+          updated = updated.map(e => newItems.some(n => n.id === e.id) ? { ...e, synced: true } : e)
+          setEntries(updated)
+          await saveToCache('journal_entries', updated)
+          const existing = (await loadFromCache<Entry[]>('synced_entries')) || []
+          await saveToCache('synced_entries', [...newItems.map(e => ({ ...e, synced: true })), ...existing])
+        }
+      }
+    } catch {}
     setText('');
   }
 
-  async function syncNow() {
-    // simple manual sync simulation: mark all as synced and move to 'synced_entries'
-  const toSync = entries.map((e) => ({ ...e, synced: true }));
-    const existing = (await loadFromCache<Entry[]>('synced_entries')) || [];
-    await saveToCache('synced_entries', [...toSync, ...existing]);
-    await saveToCache('journal_entries', []);
-    // Route writes via API (server-side validation/logging)
-    try {
-  const userId = user?.id || '';
-  if (!userId) return;
-      const rows = toSync.map((e) => ({
-        user_id: userId,
-        text: e.text,
-        calories: e.calories,
-        date: e.date,
-      }));
-      await fetch('/api/entries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rows),
-      })
-    } catch (err) {
-      console.warn('Sync API error:', err)
-    }
-    setEntries([]);
+  function startEdit(id: string, currentText: string) {
+    setEditingId(id)
+    setEditingText(currentText)
+  }
+
+  async function saveEdit(id: string) {
+    const parsed = parse(editingText) as ParsedItem[]
+    const calories = Math.max(0, Math.round(parsed.reduce((s, p) => s + (p.calories || 0), 0)))
+    const updated = entries.map(e => e.id === id ? { ...e, text: editingText, calories } : e)
+    setEntries(updated)
+    await saveToCache('journal_entries', updated)
+    setEditingId(null)
+    setEditingText('')
+  }
+
+  async function deleteEntry(id: string) {
+    const updated = entries.filter(e => e.id !== id)
+    setEntries(updated)
+    await saveToCache('journal_entries', updated)
   }
 
   return (
@@ -93,18 +122,38 @@ export default function JournalInput() {
       <textarea id="journal-entry" value={text} onChange={(e) => setText(e.target.value)} className="w-full border rounded p-2" placeholder="e.g. 2 eggs, 1 banana, 30 min walk" />
       <div className="flex gap-2 mt-2">
         <button onClick={addEntry} className="bg-blue-600 text-white px-3 py-1 rounded">Add</button>
-        <button onClick={syncNow} className="bg-green-600 text-white px-3 py-1 rounded">Sync Now</button>
       </div>
 
       <div className="mt-4">
-        <h3 className="font-semibold">Local Entries</h3>
-        {entries.length === 0 && <p className="text-sm text-gray-500">No local entries</p>}
+        <h3 className="font-semibold">Entries</h3>
+        {entries.length === 0 && <p className="text-sm text-gray-500">No entries yet</p>}
         <ul className="space-y-2 mt-2">
           {entries.map((e) => (
             <li key={e.id} className="p-2 border rounded bg-white">
-              <div className="text-sm text-gray-600">{new Date(e.date).toLocaleString()}</div>
-              <div className="font-medium">{e.text}</div>
-              <div className="text-sm">{e.calories} kcal</div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm text-gray-600">{new Date(e.date).toLocaleString()}</div>
+                  {editingId === e.id ? (
+                    <input className="mt-1 border rounded p-1 w-full" value={editingText} onChange={ev => setEditingText(ev.target.value)} />
+                  ) : (
+                    <div className="font-medium">{e.text}</div>
+                  )}
+                  <div className="text-sm">{e.calories} kcal {e.synced && <span className="text-gray-500">• synced</span>}</div>
+                </div>
+                <div className="flex gap-2">
+                  {editingId === e.id ? (
+                    <>
+                      <button className="text-sm bg-green-600 text-white px-2 py-1 rounded" onClick={() => saveEdit(e.id)}>Save</button>
+                      <button className="text-sm bg-gray-300 px-2 py-1 rounded" onClick={() => { setEditingId(null); setEditingText('') }}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="text-sm bg-gray-200 px-2 py-1 rounded disabled:opacity-50" disabled={!!e.synced} onClick={() => startEdit(e.id, e.text)}>Edit</button>
+                      <button className="text-sm bg-red-600 text-white px-2 py-1 rounded disabled:opacity-50" disabled={!!e.synced} onClick={() => deleteEntry(e.id)}>Delete</button>
+                    </>
+                  )}
+                </div>
+              </div>
             </li>
           ))}
         </ul>

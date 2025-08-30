@@ -16,6 +16,7 @@ export function parse(_entry: string) {
     yoghurt: 'yogurt',
     oats: 'cereal',
     steak: 'beef',
+    toast: 'bread',
   }
   const unitPer100g: Record<string, number> = {
     rice: 130, chicken: 165, beef: 250, potato: 77, pasta: 131, bread: 265, apple: 52, banana: 89
@@ -26,7 +27,11 @@ export function parse(_entry: string) {
   const cupGramsApprox: Record<string, number> = {
     rice: 195, pasta: 140, milk: 240, yogurt: 245, cereal: 30
   }
-  const parts = entry.split(/[,;+]/).map(s => s.trim()).filter(Boolean)
+  // Split into parts by common natural language separators
+  const parts = entry
+    .split(/[,;+]|\band\b|\bwith\b|\bplus\b|&/g)
+    .map(s => s.trim())
+    .filter(Boolean)
   const results = [] as Array<{ item: string; calories: number }>
   for (const p of parts) {
     // "200 kcal" or "kcal 200"
@@ -49,7 +54,13 @@ export function parse(_entry: string) {
   for (const raw of tokens) {
       let t = raw.replace(/[^a-z]/g, '')
       if (synonyms[t]) t = synonyms[t]
-      if (known[t]) calories += known[t] * qty
+      // default servings when no explicit qty
+      if (t === 'egg' || t === 'eggs') {
+        const q = qtyMatch ? qty : 2 // default 2 eggs
+        calories += (known['egg'] || 78) * q
+        continue
+      }
+      if (known[t]) calories += known[t] * (qtyMatch ? qty : 1)
       // grams e.g., "rice 150g"
       const g = /(\d{2,4})g$/.exec(raw)
       if (g) {
@@ -111,7 +122,12 @@ export function parse(_entry: string) {
         calories += n * 40
       }
     }
-    results.push({ item: p, calories: Math.max(0, Math.round(calories || 100)) })
+    // If we still didn't match anything, use a conservative default per token
+    if (!calories) {
+      const base = tokens.map(x => x.replace(/[^a-z]/g, '')).find(x => known[x])
+      if (base && known[base]) calories = known[base]
+    }
+    results.push({ item: p, calories: Math.max(0, Math.round(calories || 120)) })
   }
   return results
 }
