@@ -1,14 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import getSupabase from '../../../src/lib/supabaseClient'
 
-type EntryRow = {
-  id: string
-  user_id: string
-  text: string
-  calories: number
-  date: string
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const supabase = getSupabase()
   if (!supabase) return res.status(503).json({ error: 'Supabase not configured' })
@@ -16,21 +8,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === 'GET') {
     const userId = (req.query.userId as string) || ''
     if (!userId) return res.status(400).json({ error: 'Missing userId' })
-
-    const { data, error } = await supabase
-      .from('entries')
-      .select('id,user_id,text,calories,date')
-      .eq('user_id', userId)
-      .order('date', { ascending: false })
-
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
     if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json({ entries: (data as EntryRow[]) || [] })
+    return res.status(200).json({ profile: data })
   }
 
   if (req.method === 'POST') {
-    const rows = req.body as Array<{ user_id: string; text: string; calories: number; date: string }>
-    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'Missing rows' })
-    const { error } = await supabase.from('entries').insert(rows)
+    const body = req.body
+    const { error } = await supabase.from('profiles').upsert(body, { onConflict: 'id' })
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({ ok: true })
   }

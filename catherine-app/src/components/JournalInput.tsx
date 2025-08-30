@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { parse } from '../stubs/parserStub';
 import { saveToCache, loadFromCache } from '../lib/cache';
-import getSupabase from '../lib/supabaseClient';
 import { getOrCreateUserId } from '../lib/user';
 
 type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean };
@@ -65,24 +64,22 @@ export default function JournalInput() {
     const existing = (await loadFromCache<Entry[]>('synced_entries')) || [];
     await saveToCache('synced_entries', [...toSync, ...existing]);
     await saveToCache('journal_entries', []);
-    // Try Supabase insert
+    // Route writes via API (server-side validation/logging)
     try {
-      const supabase = getSupabase();
-      if (supabase) {
-        const userId = getOrCreateUserId();
-        const rows = toSync.map((e) => ({
-          user_id: userId,
-          text: e.text,
-          calories: e.calories,
-          date: e.date,
-        }));
-        const { error } = await supabase.from('entries').insert(rows);
-        if (error) {
-          console.warn('Supabase insert entries failed:', error.message);
-        }
-      }
+      const userId = getOrCreateUserId();
+      const rows = toSync.map((e) => ({
+        user_id: userId,
+        text: e.text,
+        calories: e.calories,
+        date: e.date,
+      }));
+      await fetch('/api/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rows),
+      })
     } catch (err) {
-      console.warn('Supabase client error:', err);
+      console.warn('Sync API error:', err)
     }
     setEntries([]);
   }

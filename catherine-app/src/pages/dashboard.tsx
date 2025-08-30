@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadFromCache } from '../lib/cache';
+import RequireAuth from '../components/RequireAuth';
 import Warnings from '../components/Warnings';
 
 export default function Dashboard() {
@@ -17,15 +18,17 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-      <div className="p-4 bg-white rounded shadow">
-  <h2 className="text-lg">Today&apos;s calories</h2>
-        <div className="text-3xl font-bold">{total} kcal</div>
+    <RequireAuth>
+      <div className="max-w-2xl mx-auto p-4">
+        <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
+        <div className="p-4 bg-white rounded shadow">
+          <h2 className="text-lg">Today&apos;s calories</h2>
+          <div className="text-3xl font-bold">{total} kcal</div>
+        </div>
+        <div className="mt-4">
+          <Warnings caloriesToday={total} />
+        </div>
       </div>
-      <div className="mt-4">
-        <Warnings caloriesToday={total} />
-      </div>
-    </div>
+    </RequireAuth>
   );
 }
