@@ -58,11 +58,13 @@ export default function Onboarding() {
     if (
       form.age && form.sex && form.weight && form.height && form.activityLevel && form.goal
     ) {
+      const weightKg = Number(form.weight) * 0.45359237
+      const heightCm = Number(form.height) * 2.54
       const calorie = calculateCalorieTarget({
         age: Number(form.age),
         sex: form.sex as 'male' | 'female',
-        weight: Number(form.weight),
-        height: Number(form.height),
+        weight: weightKg,
+        height: heightCm,
         activityLevel: Number(form.activityLevel),
       });
       setCalorieTarget(calorie);
@@ -71,8 +73,8 @@ export default function Onboarding() {
         id: user!.id,
         age: Number(form.age),
         sex: form.sex as 'male' | 'female',
-        weight: Number(form.weight),
-        height: Number(form.height),
+  weight: weightKg,
+  height: heightCm,
         goal: form.goal as 'gain' | 'lose' | 'maintain',
         activityLevel: Number(form.activityLevel),
         favoriteFoods: form.favoriteFoods
@@ -116,12 +118,12 @@ export default function Onboarding() {
           </select>
         </div>
         <div>
-          <label className="block mb-1">Weight (kg)</label>
-          <input name="weight" type="number" min="30" max="300" value={form.weight} onChange={handleChange} className="w-full border rounded p-2" required />
+          <label className="block mb-1">Weight (lbs)</label>
+          <input name="weight" type="number" min="66" max="660" value={form.weight} onChange={handleChange} className="w-full border rounded p-2" required />
         </div>
         <div>
-          <label className="block mb-1">Height (cm)</label>
-          <input name="height" type="number" min="100" max="250" value={form.height} onChange={handleChange} className="w-full border rounded p-2" required />
+          <label className="block mb-1">Height (inches)</label>
+          <input name="height" type="number" min="39" max="98" value={form.height} onChange={handleChange} className="w-full border rounded p-2" required />
         </div>
         <div>
           <label className="block mb-1">Goal</label>

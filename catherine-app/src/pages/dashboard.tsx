@@ -24,6 +24,16 @@ export default function Dashboard() {
       // try load profile locally for target display
       const profile = await loadFromCache<{ calorieTarget?: number }>('profile');
       if (profile?.calorieTarget) setTarget(profile.calorieTarget);
+      // ensure we reflect server value if available
+      try {
+        if (user?.id) {
+          const r = await fetch(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+          if (r.ok) {
+            const { profile: p } = await r.json()
+            if (p?.calorieTarget) setTarget(p.calorieTarget)
+          }
+        }
+      } catch {}
     })();
   }, [user?.id]);
 

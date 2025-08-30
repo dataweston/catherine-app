@@ -18,10 +18,13 @@ export function parse(_entry: string) {
     steak: 'beef',
   }
   const unitPer100g: Record<string, number> = {
-    rice: 130, chicken: 165, beef: 250, potato: 77, pasta: 131, bread: 265,
+    rice: 130, chicken: 165, beef: 250, potato: 77, pasta: 131, bread: 265, apple: 52, banana: 89
   }
   const unitPer100ml: Record<string, number> = {
     milk: 42, yogurt: 59,
+  }
+  const cupGramsApprox: Record<string, number> = {
+    rice: 195, pasta: 140, milk: 240, yogurt: 245, cereal: 30
   }
   const parts = entry.split(/[,;+]/).map(s => s.trim()).filter(Boolean)
   const results = [] as Array<{ item: string; calories: number }>
@@ -65,6 +68,47 @@ export function parse(_entry: string) {
         if (food && unitPer100ml[food]) {
           calories += (unitPer100ml[food] * mls) / 100
         }
+      }
+      // ounces e.g., "chicken 6oz"
+      const oz = /(\d{1,3})oz$/.exec(raw)
+      if (oz) {
+        const grams = parseFloat(oz[1]) * 28.3495
+        const food = tokens.map(x => x.replace(/[^a-z]/g, '')).find(x => unitPer100g[x])
+        if (food && unitPer100g[food]) calories += (unitPer100g[food] * grams) / 100
+      }
+      // pounds e.g., "beef 0.5lb" or "1lb"
+      const lb = /(\d{1,3}(?:\.\d+)?)lb$/.exec(raw)
+      if (lb) {
+        const grams = parseFloat(lb[1]) * 453.592
+        const food = tokens.map(x => x.replace(/[^a-z]/g, '')).find(x => unitPer100g[x])
+        if (food && unitPer100g[food]) calories += (unitPer100g[food] * grams) / 100
+      }
+      // cups e.g., "rice 1.5cup"/"cups"
+      const cup = /(\d{1,3}(?:\.\d+)?)(?:cup|cups)$/.exec(raw)
+      if (cup) {
+        const c = parseFloat(cup[1])
+        const food = tokens.map(x => x.replace(/[^a-z]/g, '')).find(x => cupGramsApprox[x] || unitPer100ml[x])
+        if (food) {
+          if (cupGramsApprox[food] && unitPer100g[food]) {
+            const grams = c * cupGramsApprox[food]
+            calories += (unitPer100g[food] * grams) / 100
+          } else if (unitPer100ml[food]) {
+            const mls = c * 240
+            calories += (unitPer100ml[food] * mls) / 100
+          }
+        }
+      }
+      // tbsp/tsp approximate for oils etc (basic handling)
+      const tbsp = /(\d{1,2})(?:tbsp)$/.exec(raw)
+      if (tbsp) {
+        const n = parseFloat(tbsp[1])
+        // rough 120 kcal per tbsp for oil/butter
+        calories += n * 120
+      }
+      const tsp = /(\d{1,2})(?:tsp)$/.exec(raw)
+      if (tsp) {
+        const n = parseFloat(tsp[1])
+        calories += n * 40
       }
     }
     results.push({ item: p, calories: Math.max(0, Math.round(calories || 100)) })
