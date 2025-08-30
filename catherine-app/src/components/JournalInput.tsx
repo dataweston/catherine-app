@@ -3,7 +3,7 @@ import { parse } from '../stubs/parserStub';
 import { saveToCache, loadFromCache } from '../lib/cache';
 import { useAuth } from '../lib/auth';
 
-type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean };
+type Entry = { id: string; text: string; calories: number; date: string; synced?: boolean; protein?: number; carbs?: number; fat?: number };
 type ParsedItem = { item: string; calories: number };
 
 export default function JournalInput() {
@@ -74,16 +74,37 @@ export default function JournalInput() {
 
   async function addEntry() {
   if (!text.trim()) return;
-    const parsed = parse(text) as ParsedItem[];
-    // parserStub returns array of { item, calories }
+    // First try real nutrition API for robust parsing; fall back to stub parser
+    let newItems: Entry[] = []
     const now = new Date().toISOString();
-    const newItems = parsed.map((p: ParsedItem, i: number) => ({
-      id: `${Date.now()}-${i}`,
-      text: p.item || text,
-      calories: p.calories || 0,
-      date: now,
-      synced: false,
-    }));
+    try {
+      const res = await fetch(`/api/food/search?q=${encodeURIComponent(text)}`)
+      if (res.ok) {
+        const j = await res.json() as { items: Array<{ name: string; serving: string; calories: number; protein?: number; carbs?: number; fat?: number }> }
+        if (Array.isArray(j.items) && j.items.length > 0) {
+          newItems = j.items.map((it, i) => ({
+            id: `${Date.now()}-${i}`,
+            text: `${it.name} (${it.serving})`,
+            calories: Math.max(0, Math.round(it.calories || 0)),
+            protein: typeof it.protein === 'number' ? Math.max(0, Math.round(it.protein)) : undefined,
+            carbs: typeof it.carbs === 'number' ? Math.max(0, Math.round(it.carbs)) : undefined,
+            fat: typeof it.fat === 'number' ? Math.max(0, Math.round(it.fat)) : undefined,
+            date: now,
+            synced: false,
+          }))
+        }
+      }
+    } catch {}
+    if (newItems.length === 0) {
+      const parsed = parse(text) as ParsedItem[];
+      newItems = parsed.map((p: ParsedItem, i: number) => ({
+        id: `${Date.now()}-${i}`,
+        text: p.item || text,
+        calories: p.calories || 0,
+        date: now,
+        synced: false,
+      }));
+    }
   const updatedLocal = [...newItems, ...entries.filter(e => !e.synced)];
     setEntries([...
       updatedLocal,
@@ -99,7 +120,11 @@ export default function JournalInput() {
         const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(rows) })
         if (res.ok) {
           const data = await res.json() as { entries: Array<{ id: string; text: string; calories: number; date: string }> }
-          const inserted = data.entries.map(e => ({ id: e.id, text: e.text, calories: e.calories, date: e.date, synced: true }))
+          // Preserve macros from newItems by zipping order
+          const inserted: Entry[] = data.entries.map((e, i) => ({
+            id: e.id, text: e.text, calories: e.calories, date: e.date, synced: true,
+            protein: newItems[i]?.protein, carbs: newItems[i]?.carbs, fat: newItems[i]?.fat,
+          }))
           // Clear the local versions we just synced
           const remainingLocal = (await loadFromCache<Entry[]>('journal_entries'))?.filter(e => !newItems.some(n => n.id === e.id)) || []
           await saveToCache('journal_entries', remainingLocal)
