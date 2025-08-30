@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { calculateCalorieTarget } from '../lib/calorieCalc';
-import getSupabase from '../lib/supabaseClient';
 import { saveToCache } from '../lib/cache';
 import RequireAuth from '../components/RequireAuth';
 import { useAuth } from '../lib/auth';
@@ -82,20 +81,16 @@ export default function Onboarding() {
           .filter(Boolean),
         calorieTarget: calorie,
       };
-      // Best-effort: save locally and try Supabase
+      // Save locally and POST to our API to persist on the server
       await saveToCache('profile', profile);
       try {
-        const supabase = getSupabase();
-        if (!supabase) return; // no envs in preview/local without setup
-        const { error } = await supabase.from('profiles').upsert(profile, {
-          onConflict: 'id',
-        });
-        if (error) {
-          // keep local only
-          console.warn('Supabase upsert profile failed:', error.message);
-        }
+        await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profile),
+        })
       } catch (err) {
-        console.warn('Supabase client error:', err);
+        console.warn('Profile API error:', err)
       }
       router.replace('/dashboard')
     }

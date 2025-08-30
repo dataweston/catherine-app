@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { useAuth } from '../lib/auth'
+import { loadFromCache } from '../lib/cache'
+import type { UserProfile } from '../models/UserProfile'
 
 export default function Login() {
   const { user, loading, signInWithEmail, signOut } = useAuth()
@@ -16,6 +18,20 @@ export default function Login() {
         if (r.ok) {
           const { profile } = await r.json()
           if (!profile || !profile.calorieTarget) {
+            // Attempt migrating any locally saved profile for anon user to this account
+            const local = await loadFromCache<UserProfile>('profile')
+            if (local && local.calorieTarget) {
+              const migrated = { ...local, id: user.id }
+              try {
+                await fetch('/api/profile', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(migrated),
+                })
+                router.replace('/dashboard')
+                return
+              } catch {}
+            }
             router.replace('/onboarding')
           } else {
             router.replace('/dashboard')
